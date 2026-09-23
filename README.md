@@ -36,6 +36,28 @@ python scripts/train.py --steps 30e6 --out runs/my_run                # train yo
 On 4 CPU cores training runs at about 7,000 simulated steps/s. The network learns to hover in about 2M
 steps (5 minutes). A solid policy that handles wind and pushes needs 20–30M steps (about an hour).
 
+## Results (pre-trained `models/f450_policy.pt`, 30M steps, 200 random episodes each)
+
+Episodes start thrown (up to 60° tilt, spinning), with wind, gusts, random shoves and ±15 % mass randomisation.
+
+| drone | controller | crash rate | median final error | p90 error |
+|---|---|---|---|---|
+| default F450 (901 g) | **neural net** | **1.0 %** | **7.7 cm** | **18 cm** |
+| default F450 (901 g) | cascaded PID | 8.5 % | 16.5 cm | 34 cm |
+| + 250 g payload | **neural net** | **2.0 %** | **7.7 cm** | **12 cm** |
+| + 250 g payload | cascaded PID | 7.0 % | 13.7 cm | 29 cm |
+| battery moved 3 cm forward | **neural net** | **0.5 %** | **7.4 cm** | **16 cm** |
+| battery moved 3 cm forward | cascaded PID | 8.5 % | 16.8 cm | 35 cm |
+
+![NN mission](docs/mission_nn.png)
+
+*`fly_mission.py --throw --wind 2`: the drone is released at 70° roll while spinning, recovers in about 1 s, then
+flies 6 waypoints. Bottom right shows the simulated raw MPU-6050 registers.*
+
+Known limitation: the policy's motor commands are jittery (bang-bang-ish high-frequency switching). That is
+fine in simulation, but on real hardware it heats the motors. Before flying it, raise the action-smoothness
+penalty in `env.py` (`0.1 * mean((a - a_prev)²)`) and retrain, or low-pass the outputs.
+
 ## 1. Component weight system (`drone_sim/components.py`)
 
 The drone is a list of parts, defined in [`drone_sim/configs/f450_mpu6050.json`](drone_sim/configs/f450_mpu6050.json).
