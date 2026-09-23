@@ -1,0 +1,52 @@
+{
+  "name": "F450 quadcopter, MPU-6050 flight controller",
+  "gravity": 9.80665,
+  "rotors": {
+    "count": 4,
+    "layout": "x",
+    "arm_length": 0.225,
+    "height": 0.02,
+    "spin_directions": [1, -1, 1, -1],
+    "motor_mass": 0.055,
+    "propeller_mass": 0.012,
+    "motor_radius": 0.014,
+    "motor_height": 0.03,
+    "propeller_radius": 0.127,
+    "thrust_coefficient": 1.21e-5,
+    "torque_coefficient": 1.94e-7,
+    "max_speed_rad_s": 838.0,
+    "time_constant": 0.04,
+    "rotor_inertia": 3.0e-5
+  },
+  "aerodynamics": {
+    "linear_drag": [0.25, 0.25, 0.35],
+    "quadratic_drag": [0.03, 0.03, 0.05],
+    "rotational_damping": [0.002, 0.002, 0.003]
+  },
+  "imu": {
+    "component": "mpu6050",
+    "orientation_deg": [0.0, 0.0, 0.0],
+    "gyro_fs_sel": 1,
+    "accel_afs_sel": 2,
+    "dlpf_cfg": 3,
+    "smplrt_div": 1,
+    "calibrated": true
+  },
+  "components": [
+    {"name": "center_plates", "mass": 0.12, "position": [0.0, 0.0, 0.0], "shape": "box", "size": [0.14, 0.14, 0.02]},
+    {"name": "arm_0", "mass": 0.04, "position": [0.0778, 0.0778, 0.0], "shape": "box", "size": [0.19, 0.03, 0.03], "orientation_deg": [0, 0, 45], "group": "frame"},
+    {"name": "arm_1", "mass": 0.04, "position": [-0.0778, 0.0778, 0.0], "shape": "box", "size": [0.19, 0.03, 0.03], "orientation_deg": [0, 0, 135], "group": "frame"},
+    {"name": "arm_2", "mass": 0.04, "position": [-0.0778, -0.0778, 0.0], "shape": "box", "size": [0.19, 0.03, 0.03], "orientation_deg": [0, 0, 225], "group": "frame"},
+    {"name": "arm_3", "mass": 0.04, "position": [0.0778, -0.0778, 0.0], "shape": "box", "size": [0.19, 0.03, 0.03], "orientation_deg": [0, 0, 315], "group": "frame"},
+    {"name": "battery", "mass": 0.185, "position": [0.0, 0.0, -0.03], "shape": "box", "size": [0.105, 0.034, 0.024], "role": "battery"},
+    {"name": "flight_controller", "mass": 0.025, "position": [0.0, 0.0, 0.02], "shape": "box", "size": [0.07, 0.05, 0.015]},
+    {"name": "mpu6050", "mass": 0.003, "position": [0.0, 0.0, 0.03], "shape": "box", "size": [0.021, 0.016, 0.003], "role": "imu"},
+    {"name": "esc_0", "mass": 0.025, "position": [0.0707, 0.0707, -0.012], "shape": "box", "size": [0.05, 0.025, 0.008], "orientation_deg": [0, 0, 45], "group": "esc"},
+    {"name": "esc_1", "mass": 0.025, "position": [-0.0707, 0.0707, -0.012], "shape": "box", "size": [0.05, 0.025, 0.008], "orientation_deg": [0, 0, 135], "group": "esc"},
+    {"name": "esc_2", "mass": 0.025, "position": [-0.0707, -0.0707, -0.012], "shape": "box", "size": [0.05, 0.025, 0.008], "orientation_deg": [0, 0, 225], "group": "esc"},
+    {"name": "esc_3", "mass": 0.025, "position": [0.0707, -0.0707, -0.012], "shape": "box", "size": [0.05, 0.025, 0.008], "orientation_deg": [0, 0, 315], "group": "esc"},
+    {"name": "receiver", "mass": 0.01, "position": [-0.04, 0.0, 0.02], "shape": "box", "size": [0.04, 0.02, 0.01]},
+    {"name": "wiring_pdb", "mass": 0.03, "position": [0.0, 0.0, -0.01], "shape": "box", "size": [0.08, 0.08, 0.005]},
+    {"name": "payload", "mass": 0.0, "position": [0.0, 0.0, -0.06], "shape": "box", "size": [0.05, 0.05, 0.05], "role": "payload"}
+  ]
+}
