@@ -2,3 +2,4 @@ numpy>=1.24
 torch>=2.0
 matplotlib>=3.7   # optional, for flight plots
 pytest>=7         # optional, for tests
+imageio-ffmpeg>=0.4 # optional, for record_flight.py videos

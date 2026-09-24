@@ -30,8 +30,15 @@ python scripts/fly_mission.py --policy models/f450_policy.pt          # fly the 
 python scripts/fly_mission.py --policy models/f450_policy.pt --throw  # start by throwing it
 python scripts/evaluate.py   --policy models/f450_policy.pt           # 200 random episodes, NN vs PID
 
+python scripts/record_flight.py --throw --wind 2 --push 11.5          # record a 3D flight video (MP4/GIF)
+
 python scripts/train.py --steps 30e6 --out runs/my_run                # train your own
 ```
+
+**3D flight recording:** [`docs/flight_3d.mp4`](docs/flight_3d.mp4). The network is released tumbling at 70°,
+steadies itself, flies 6 waypoints in 2 m/s wind and recovers from a sideways shove at 11.5 s. The video shows a
+wide scene, a true-scale chase camera, true vs MPU-6050-estimated attitude, motor thrust and raw registers.
+`record_flight.py` needs `pip install imageio-ffmpeg`, or use `--out flight.gif`.
 
 On 4 CPU cores training runs at about 7,000 simulated steps/s. The network learns to hover in about 2M
 steps (5 minutes). A solid policy that handles wind and pushes needs 20–30M steps (about an hour).

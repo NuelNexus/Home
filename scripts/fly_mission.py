@@ -13,7 +13,7 @@ import numpy as np
 from common import make_controller, make_model
 
 from drone_sim import DroneEnv, EnvConfig
-from drone_sim.math3d import quat_from_euler
+from drone_sim.mission import fly_mission
 
 
 def main():
@@ -41,45 +41,11 @@ def main():
     over = dict(randomize=False, waypoint_change_prob=0.0, episode_seconds=1e6, max_distance=50.0)
     cfg = policy.env_cfg(**over) if policy else EnvConfig.from_dict(over)
     env = DroneEnv(1, model, cfg, seed=a.seed)
-    env.reset()
-    env.set_target(0, wps[0])
-    tilt = (1.2, -0.6) if a.throw else (0.0, 0.0)
-    rate = [4.0, -3.0, 2.0] if a.throw else [0, 0, 0]
-    q0 = quat_from_euler(tilt[0], tilt[1], 0.0)
-    env.phys.reset_state([0], wps[0] + [0, 0, 0.3], [0, 0, 0], q0, rate, env.phys.hover_rotor_speed()[0])
-    f, w = env.phys.imu_kinematics()
-    env.imu.reset([0], f[:1], w[:1])
-    env.ahrs.reset([0], q0)
-    env.pos_sensor.reset([0], env.phys.pos[:1], env.phys.vel[:1])
-    env.phys.wind[:] = [a.wind, 0, 0]
-    env.wind_mean[:] = [a.wind, 0, 0]
-    obs = env._observe()
     act, _ = make_controller(kind, env, policy)
-
-    rows, k, held, t_wp, t = [], 0, 0.0, 0.0, 0.0
-    reached = []
     print(f"flying {len(wps)} waypoints with the {kind.upper()} controller")
-    while k < len(wps):
-        u = act(obs)
-        env.phys.wind[:] = [a.wind, 0, 0]
-        obs, r, d, info = env.step(u)
-        t += env.dt
-        t_wp += env.dt
-        s = env.true_state(0)
-        dist = np.linalg.norm(s["pos"] - wps[k])
-        rows.append([t, *s["pos"], *wps[k], *np.rad2deg(s["euler"]), *np.rad2deg(s["est_euler"]), *s["omega"],
-                     *s["rotor_speed"], *u[0], *s["imu_raw"]])
-        if d[0] and info["crashed"][0]:
-            print(f"CRASHED at t={t:.2f}s")
-            break
-        held = held + env.dt if dist < 0.25 else 0.0
-        if held >= a.hold or t_wp > a.timeout:
-            reached.append((k, held >= a.hold, t_wp))
-            print(f"  waypoint {k} {wps[k]} -> {'reached' if held >= a.hold else 'TIMEOUT'} in {t_wp:.1f}s, "
-                  f"error {dist:.3f} m")
-            k, held, t_wp = k + 1, 0.0, 0.0
-            if k < len(wps):
-                env.set_target(0, wps[k])
+    L = fly_mission(env, act, wps, a.hold, a.timeout, wind=(a.wind, 0, 0), throw=a.throw)
+    rows = np.column_stack((L["t"], L["pos"], L["target"], np.rad2deg(L["euler"]), np.rad2deg(L["est_euler"]),
+                            L["omega"], L["rotor"], L["action"], L["imu_raw"]))
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -87,10 +53,10 @@ def main():
                "p", "q", "r", "rotor0", "rotor1", "rotor2", "rotor3", "u0", "u1", "u2", "u3",
                "ACCEL_XOUT", "ACCEL_YOUT", "ACCEL_ZOUT", "TEMP_OUT", "GYRO_XOUT", "GYRO_YOUT", "GYRO_ZOUT"])
     with open(out / f"flight_{kind}.csv", "w", newline="") as fh:
-        csv.writer(fh).writerows([header] + rows)
+        csv.writer(fh).writerows([header] + rows.tolist())
     print(f"log written to {out / f'flight_{kind}.csv'}")
     try:
-        plot(np.array(rows), out / f"flight_{kind}.png", kind)
+        plot(rows, out / f"flight_{kind}.png", kind)
         print(f"plot written to {out / f'flight_{kind}.png'}")
     except ImportError:
         print("(install matplotlib for plots)")

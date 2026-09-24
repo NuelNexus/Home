@@ -223,8 +223,8 @@ class DroneEnv:
             self.push_timer -= self.dt
             ph.ext_force[self.push_timer <= 0] = 0.0
         else:
-            ph.wind[:] = 0.0
-            ph.ext_force[:] = 0.0
+            # No random disturbances: keep any steady wind / external force set by the caller.
+            ph.wind[:] = self.wind_mean
 
         dt_phys = ph.dt
         for _ in range(self.substeps):
