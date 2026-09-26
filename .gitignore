@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 runs/
 export/
+render3d/node_modules/
+docs/*.json

@@ -1,0 +1,521 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Drone Obstacle Course</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: "DejaVu Sans", Arial, sans-serif; }
+  canvas#gl { display: block; }
+  .hud { position: absolute; color: #f2f5f8; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+  #title { left: 22px; top: 16px; }
+  #title .t1 { font-size: 21px; font-weight: 700; letter-spacing: .5px; }
+  #title .t2 { font-size: 12.5px; opacity: .85; margin-top: 3px; }
+  #section { right: 22px; top: 18px; padding: 7px 14px; border-radius: 6px; background: rgba(12,16,22,.62);
+             font-size: 15px; font-weight: 700; letter-spacing: 1px; border-left: 4px solid #ff9d2e; }
+  #panel { left: 18px; bottom: 16px; width: 380px; padding: 12px 14px; border-radius: 8px;
+           background: rgba(10,14,20,.66); font-size: 12.5px; }
+  #panel .row { display: flex; justify-content: space-between; margin: 2px 0; }
+  #panel .k { opacity: .7; }
+  #panel .v { font-family: "DejaVu Sans Mono", monospace; }
+  .bar { height: 7px; background: rgba(255,255,255,.12); border-radius: 4px; overflow: hidden; margin-top: 3px; }
+  .bar > div { height: 100%; background: linear-gradient(90deg,#3ecf8e,#ffc53d); }
+  #motors { display: flex; gap: 8px; margin-top: 8px; }
+  #motors .m { flex: 1; font-size: 10.5px; text-align: center; }
+  #motors .mb { height: 34px; background: rgba(255,255,255,.1); border-radius: 3px; position: relative; overflow: hidden; }
+  #motors .mb > div { position: absolute; bottom: 0; left: 0; right: 0; background: #ff9d2e; }
+  #imu { margin-top: 8px; font-family: "DejaVu Sans Mono", monospace; font-size: 10.5px; opacity: .85; line-height: 1.35; }
+  #mini { right: 18px; bottom: 16px; border-radius: 8px; background: rgba(10,14,20,.66); padding: 8px; }
+  #mini .cap { font-size: 10.5px; opacity: .75; margin-bottom: 4px; }
+  #done { left: 50%; top: 42%; transform: translate(-50%,-50%); padding: 18px 28px; border-radius: 10px;
+          background: rgba(10,14,20,.78); text-align: center; display: none; border-top: 4px solid #3ecf8e; }
+  #done .d1 { font-size: 26px; font-weight: 800; letter-spacing: 1px; }
+  #done .d2 { font-size: 14px; margin-top: 8px; opacity: .9; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./node_modules/three/build/three.module.js",
+               "three/addons/": "./node_modules/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="hud" id="title"><div class="t1">AUTONOMOUS OBSTACLE COURSE</div>
+  <div class="t2" id="subtitle"></div></div>
+<div class="hud" id="section">TAKE-OFF</div>
+<div class="hud" id="panel">
+  <div class="row"><span class="k">time</span><span class="v" id="h_t"></span></div>
+  <div class="row"><span class="k">speed / altitude</span><span class="v" id="h_sa"></span></div>
+  <div class="row"><span class="k">clearance to nearest obstacle</span><span class="v" id="h_c"></span></div>
+  <div class="row"><span class="k">roll / pitch (true · MPU-6050 est.)</span><span class="v" id="h_att"></span></div>
+  <div class="row"><span class="k">course progress</span><span class="v" id="h_p"></span></div>
+  <div class="bar"><div id="h_pb" style="width:0%"></div></div>
+  <div id="motors"></div>
+  <div id="imu"></div>
+</div>
+<div class="hud" id="mini"><div class="cap">TOP VIEW · planned path (cyan) · flown (orange)</div><canvas id="map" width="300" height="130"></canvas></div>
+<div class="hud" id="done"><div class="d1">COURSE COMPLETE</div><div class="d2" id="done2"></div></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+
+const data = await (await fetch('/data.json')).json();
+const F = data.frames, W = data.width, H = data.height, course = data.course, drone = data.drone;
+const DT = 1 / data.fps;
+
+// ------------------------------------------------------------------ renderer / scene
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('gl'), antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.9;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xc9d6e3, 30, 110);
+const camera = new THREE.PerspectiveCamera(55, W / H, 0.05, 600);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.45;
+
+// Simulation frame is z-up (x forward, y left). three.js is y-up: rotate the whole sim world.
+const sim = new THREE.Group();
+sim.rotation.x = -Math.PI / 2;
+scene.add(sim);
+const s2w = (p) => new THREE.Vector3(p[0], p[2], -p[1]);
+
+// Sun + sky
+const sunDirSim = new THREE.Vector3(-0.45, -0.55, 0.9).normalize();
+const sunDirW = s2w([sunDirSim.x, sunDirSim.y, sunDirSim.z]);
+const sky = new Sky();
+sky.scale.setScalar(4000);
+const su = sky.material.uniforms;
+su.turbidity.value = 5; su.rayleigh.value = 1.2; su.mieCoefficient.value = 0.004; su.mieDirectionalG.value = 0.82;
+su.sunPosition.value.copy(sunDirW);
+scene.add(sky);
+scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x5d5446, 0.9));
+const sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9, near: 1, far: 60 });
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.02;
+scene.add(sun, sun.target);
+
+// ------------------------------------------------------------------ procedural textures
+function canvasTex(w, h, draw, repeat = [1, 1], srgb = true) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(...repeat);
+  t.anisotropy = 8;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function noise(g, w, h, base, amp, n = 9000) {
+  g.fillStyle = base; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < n; i++) {
+    const v = (Math.random() - 0.5) * amp;
+    g.fillStyle = `rgba(${v > 0 ? 255 : 0},${v > 0 ? 255 : 0},${v > 0 ? 255 : 0},${Math.abs(v)})`;
+    g.fillRect(Math.random() * w, Math.random() * h, 1 + Math.random() * 2, 1 + Math.random() * 2);
+  }
+}
+const groundTex = canvasTex(512, 512, (g, w, h) => {
+  noise(g, w, h, '#6d736f', 0.10, 26000);
+  g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = 2;
+  for (let i = 0; i <= 4; i++) { g.beginPath(); g.moveTo(i * w / 4, 0); g.lineTo(i * w / 4, h); g.stroke();
+    g.beginPath(); g.moveTo(0, i * h / 4); g.lineTo(w, i * h / 4); g.stroke(); }
+  g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = 4; g.strokeRect(0, 0, w, h);
+}, [100, 100]);
+const concreteTex = canvasTex(256, 512, (g, w, h) => {
+  noise(g, w, h, '#b9b7b0', 0.12, 12000);
+  for (const y0 of [0.05, 0.55]) {
+    for (let k = -8; k < 16; k++) { g.fillStyle = k % 2 ? '#1b1b1b' : '#f2c31b';
+      g.beginPath(); const y = h * (1 - y0);
+      g.moveTo(k * 32, y); g.lineTo(k * 32 + 32, y); g.lineTo(k * 32 + 32 + 40, y - 40); g.lineTo(k * 32 + 40, y - 40); g.fill(); }
+  }
+});
+const wallTex = canvasTex(512, 512, (g, w, h) => {
+  noise(g, w, h, '#d7d3cb', 0.08, 14000);
+  g.strokeStyle = 'rgba(60,60,60,0.35)'; g.lineWidth = 3;
+  for (let i = 0; i <= 4; i++) { g.beginPath(); g.moveTo(0, i * h / 4); g.lineTo(w, i * h / 4); g.stroke(); }
+  for (let r = 0; r < 4; r++) for (let i = 0; i <= 2; i++) { const x = (i + (r % 2) * 0.5) * w / 2;
+    g.beginPath(); g.moveTo(x, r * h / 4); g.lineTo(x, (r + 1) * h / 4); g.stroke(); }
+});
+const hazardTex = canvasTex(256, 256, (g, w, h) => {
+  g.fillStyle = '#f2c31b'; g.fillRect(0, 0, w, h); g.fillStyle = '#161616';
+  for (let k = -4; k < 8; k++) { g.beginPath(); g.moveTo(k * 64, 0); g.lineTo(k * 64 + 32, 0); g.lineTo(k * 64 + 32 + h, h); g.lineTo(k * 64 + h, h); g.fill(); }
+});
+const poleTex = canvasTex(64, 512, (g, w, h) => { for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#f4f4f4' : '#d8262b'; g.fillRect(0, i * h / 8, w, h / 8); } });
+const netTex = canvasTex(256, 256, (g, w, h) => {
+  g.clearRect(0, 0, w, h); g.strokeStyle = 'rgba(255,255,255,1)'; g.lineWidth = 3;
+  for (let i = 0; i <= 8; i++) { g.beginPath(); g.moveTo(i * w / 8, 0); g.lineTo(i * w / 8, h); g.stroke();
+    g.beginPath(); g.moveTo(0, i * h / 8); g.lineTo(w, i * h / 8); g.stroke(); }
+}, [1, 1], false);
+const carbonTex = canvasTex(128, 128, (g, w, h) => {
+  g.fillStyle = '#16181c'; g.fillRect(0, 0, w, h);
+  for (let y = 0; y < h; y += 8) for (let x = 0; x < w; x += 8) {
+    g.fillStyle = ((x + y) / 8) % 2 ? '#262a31' : '#1c1f25'; g.fillRect(x, y, 8, 8); }
+}, [2, 2]);
+const padTex = canvasTex(512, 512, (g, w, h) => {
+  g.fillStyle = '#2b2f36'; g.fillRect(0, 0, w, h);
+  g.strokeStyle = '#ffd23f'; g.lineWidth = 22; g.beginPath(); g.arc(w / 2, h / 2, w * 0.42, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = '#ffffff'; g.font = 'bold 250px DejaVu Sans'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('H', w / 2, h / 2 + 10);
+});
+function labelTex(text, color = '#ffffff', bg = 'rgba(15,18,24,0.72)', font = 64) {
+  const c = document.createElement('canvas'); const g = c.getContext('2d');
+  g.font = `bold ${font}px DejaVu Sans`; const tw = g.measureText(text).width;
+  c.width = tw + 60; c.height = font * 1.6;
+  g.fillStyle = bg; g.beginPath(); g.roundRect(0, 0, c.width, c.height, 18); g.fill();
+  g.font = `bold ${font}px DejaVu Sans`; g.fillStyle = color; g.textBaseline = 'middle'; g.fillText(text, 30, c.height / 2 + 3);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return { tex: t, aspect: c.width / c.height };
+}
+const labels = [];
+function label(text, posSim, height = 0.55, color) {
+  const { tex, aspect } = labelTex(text, color);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  s.scale.set(height * aspect, height, 1);
+  s.position.copy(s2w(posSim));
+  scene.add(s);
+  labels.push(s);
+  return s;
+}
+
+// ------------------------------------------------------------------ world
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400),
+  new THREE.MeshStandardMaterial({ map: groundTex, roughness: 0.95, metalness: 0 }));
+ground.receiveShadow = true;
+sim.add(ground);   // PlaneGeometry lies in XY: exactly the sim ground plane z = 0
+
+const std = (o) => new THREE.MeshStandardMaterial(o);
+function tiled(tex, rx, ry) { const t = tex.clone(); t.needsUpdate = true; t.repeat.set(rx, ry); return t; }
+
+for (const o of course.obstacles) {
+  let mesh;
+  if (o.type === 'cylinder') {
+    const g = new THREE.CylinderGeometry(o.radius, o.radius, o.height, 40, 1);
+    let mat;
+    if (o.kind === 'pole') mat = std({ map: tiled(poleTex, 1, Math.round(o.height / 1.2)), roughness: 0.5 });
+    else if (o.kind === 'post') mat = std({ color: 0x8a9099, roughness: 0.35, metalness: 0.8 });
+    else mat = std({ map: tiled(concreteTex, Math.max(1, Math.round(o.radius * 6)), 1), roughness: 0.85 });
+    mesh = new THREE.Mesh(g, mat);
+    mesh.rotation.x = Math.PI / 2;      // cylinder axis (local y) -> sim z
+    mesh.position.set(o.x, o.y, o.z0 + o.height / 2);
+  } else {
+    const [sx, sy, sz] = o.size;
+    let mat;
+    if (o.kind === 'net') {
+      mat = std({ color: 0xff8a1f, alphaMap: tiled(netTex, Math.max(1, sy * 2), sz * 2), transparent: true,
+                  side: THREE.DoubleSide, roughness: 0.6, depthWrite: false });
+    } else if (o.kind === 'beam') {
+      mat = std({ map: tiled(hazardTex, sy / 1.2, 1), roughness: 0.55, metalness: 0.2 });
+    } else {
+      mat = std({ map: tiled(wallTex, Math.max(sx, sy) / 2, sz / 2), roughness: 0.9 });
+    }
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
+    mesh.position.set(...o.center);
+    if (o.kind === 'net') {
+      const rope = new THREE.Mesh(new THREE.BoxGeometry(0.04, sy, 0.04), std({ color: 0x222222 }));
+      rope.position.set(o.center[0], o.center[1], o.center[2] + sz / 2);
+      sim.add(rope);
+    }
+  }
+  mesh.castShadow = o.kind !== 'net';
+  mesh.receiveShadow = true;
+  sim.add(mesh);
+}
+// Glowing gate frames around the windows
+for (const g of course.gates) {
+  const [x, y, z] = g.center, [w, h] = g.size, t = 0.09;
+  const mat = std({ color: 0xff8a1f, emissive: 0xff6a00, emissiveIntensity: 1.6, roughness: 0.4 });
+  for (const [cy, cz, sy, sz] of [[y, z + h / 2, w + 2 * t, t], [y, z - h / 2, w + 2 * t, t], [y - w / 2, z, t, h], [y + w / 2, z, t, h]]) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(0.3, sy, sz), mat);
+    b.position.set(x, cy, cz); b.castShadow = true; sim.add(b);
+  }
+  label(g.label, [x - 0.2, y, z + h / 2 + 0.4], 0.32, '#ffb35c');
+}
+for (const l of course.labels) label(l.text, l.pos, 0.45);
+// Start and landing pads
+for (const [p, txt] of [[course.start, 'START'], [course.goal, 'LANDING']]) {
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.95, 0.06, 64),
+    [std({ color: 0x2b2f36, roughness: 0.7 }), std({ map: padTex, roughness: 0.6 }), std({ color: 0x2b2f36 })]);
+  pad.rotation.x = Math.PI / 2; pad.position.set(p[0], p[1], 0.03); pad.receiveShadow = true; sim.add(pad);
+  label(txt, [p[0] - 0.2, p[1] + 1.5, 0.25], 0.28, '#ffe08a');
+}
+// Distant scenery for depth: trees and buildings fading into the fog
+const rng = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
+const treeMat = std({ color: 0x3f6b3a, roughness: 0.9 }), trunkMat = std({ color: 0x5a4430, roughness: 0.9 });
+for (let i = 0; i < 70; i++) {
+  const x = -12 + rng() * 50, side = rng() < 0.5 ? -1 : 1, y = side * (7 + rng() * 14), s = 0.8 + rng() * 1.4;
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12 * s, 0.16 * s, 1.4 * s, 8), trunkMat);
+  trunk.rotation.x = Math.PI / 2; trunk.position.set(x, y, 0.7 * s); trunk.castShadow = true; sim.add(trunk);
+  const crown = new THREE.Mesh(new THREE.ConeGeometry(1.0 * s, 2.8 * s, 10), treeMat);
+  crown.rotation.x = Math.PI / 2; crown.position.set(x, y, 1.4 * s + 1.2 * s); crown.castShadow = true; sim.add(crown);
+}
+const bMat = std({ color: 0x9aa6b4, roughness: 0.8 });
+for (let i = 0; i < 26; i++) {
+  const x = -30 + rng() * 90, y = (rng() < 0.5 ? -1 : 1) * (32 + rng() * 30), w = 4 + rng() * 8, h = 5 + rng() * 22;
+  const b = new THREE.Mesh(new THREE.BoxGeometry(w, w * (0.6 + rng()), h), bMat);
+  b.position.set(x, y, h / 2); sim.add(b);
+}
+
+// Planned path (cyan tube) and flown trail (orange tube revealed progressively)
+const pathCurve = new THREE.CatmullRomCurve3(data.path.map((p) => new THREE.Vector3(...p)));
+const pathTube = new THREE.Mesh(new THREE.TubeGeometry(pathCurve, data.path.length * 2, 0.012, 6, false),
+  new THREE.MeshBasicMaterial({ color: 0x35d6ff, transparent: true, opacity: 0.55 }));
+sim.add(pathTube);
+const trailPts = F.filter((_, i) => i % 2 === 0).map((f) => new THREE.Vector3(...f.p));
+const trailSegs = trailPts.length - 1, RAD = 6;
+const trail = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(trailPts), trailSegs, 0.014, RAD, false),
+  std({ color: 0xff8a1f, emissive: 0xff5a00, emissiveIntensity: 0.9 }));
+sim.add(trail);
+const carrot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 20, 14),
+  new THREE.MeshBasicMaterial({ color: 0xff3df2, transparent: true, opacity: 0.85 }));
+sim.add(carrot);
+
+// ------------------------------------------------------------------ the drone (from the component list)
+const droneG = new THREE.Group();
+sim.add(droneG);
+const deg = Math.PI / 180;
+function place(mesh, c) {
+  mesh.position.set(...c.position);
+  const o = c.orientation_deg || [0, 0, 0];
+  mesh.rotation.set(o[0] * deg, o[1] * deg, o[2] * deg, 'ZYX');
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  droneG.add(mesh);
+  return mesh;
+}
+const rbox = (sx, sy, sz, r = 0.004) => new RoundedBoxGeometry(sx, sy, sz, 3, Math.min(r, sx / 2.1, sy / 2.1, sz / 2.1));
+const carbon = std({ map: carbonTex, roughness: 0.35, metalness: 0.4 });
+const lipoTex = canvasTex(512, 160, (g, w, h) => {
+  g.fillStyle = '#1d3f8f'; g.fillRect(0, 0, w, h); g.fillStyle = '#ffd23f'; g.fillRect(0, 0, w, 26);
+  g.fillStyle = '#fff'; g.font = 'bold 54px DejaVu Sans'; g.fillText('3S 2200mAh', 20, 92);
+  g.font = '30px DejaVu Sans'; g.fillText('11.1V  LiPo  30C', 22, 138);
+});
+for (const c of drone.components) {
+  if (c.mass <= 0) continue;
+  const [sx, sy, sz] = c.size.length === 3 ? c.size : [0.03, 0.03, 0.03];
+  if (c.name === 'center_plates') {
+    for (const dz of [0.012, -0.012]) {
+      const m = place(new THREE.Mesh(rbox(sx, sy, 0.0025, 0.01), carbon), c);
+      m.position.z += dz;
+    }
+    for (const [x, y] of [[0.05, 0.05], [-0.05, 0.05], [-0.05, -0.05], [0.05, -0.05]]) {
+      const so = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.024, 8), std({ color: 0xc9a227, metalness: 0.9, roughness: 0.3 }));
+      so.rotation.x = Math.PI / 2; so.position.set(c.position[0] + x, c.position[1] + y, c.position[2]); droneG.add(so);
+    }
+  } else if (c.name.startsWith('arm_')) {
+    const front = c.position[0] > 0;
+    const m = place(new THREE.Mesh(rbox(sx, sy, sz * 0.8, 0.008), std({ color: front ? 0xd7262e : 0xf2f2f2, roughness: 0.45 })), c);
+    m.scale.x = 1.12;
+  } else if (c.name === 'battery') {
+    place(new THREE.Mesh(rbox(sx, sy, sz, 0.006), [
+      std({ color: 0x1d3f8f, roughness: 0.4 }), std({ color: 0x1d3f8f, roughness: 0.4 }),
+      std({ map: lipoTex, roughness: 0.4 }), std({ map: lipoTex, roughness: 0.4 }),
+      std({ color: 0x1d3f8f }), std({ color: 0x1d3f8f })]), c);
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(0.02, sy + 0.004, sz + 0.004), std({ color: 0x111111, roughness: 0.9 }));
+    strap.position.set(...c.position); droneG.add(strap);
+  } else if (c.name === 'flight_controller') {
+    place(new THREE.Mesh(rbox(sx, sy, sz * 0.3, 0.002), std({ color: 0x0f5e2e, roughness: 0.5 })), c);
+    const chip = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.018, 0.003), std({ color: 0x111111, roughness: 0.4 }));
+    chip.position.set(c.position[0], c.position[1], c.position[2] + sz * 0.15 + 0.0015); droneG.add(chip);
+    for (let i = 0; i < 10; i++) {
+      const pin = new THREE.Mesh(new THREE.BoxGeometry(0.002, 0.002, 0.008), std({ color: 0xd4af37, metalness: 1, roughness: 0.3 }));
+      pin.position.set(c.position[0] - sx / 2 + 0.006 + i * 0.006, c.position[1] + sy / 2 - 0.004, c.position[2] + sz * 0.15 + 0.004);
+      droneG.add(pin);
+    }
+  } else if (c.name === 'mpu6050') {
+    place(new THREE.Mesh(rbox(sx, sy, 0.0016, 0.001), std({ color: 0x1d4fd8, roughness: 0.45 })), c);
+    const chip = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.004, 0.0009), std({ color: 0x0b0b0b, roughness: 0.3 }));
+    chip.position.set(c.position[0], c.position[1], c.position[2] + 0.0013); droneG.add(chip);
+    const hdr = new THREE.Mesh(new THREE.BoxGeometry(0.0025, sy * 0.9, 0.0025), std({ color: 0x111111 }));
+    hdr.position.set(c.position[0] - sx / 2 + 0.002, c.position[1], c.position[2] + 0.002); droneG.add(hdr);
+  } else if (c.name.startsWith('esc_')) {
+    place(new THREE.Mesh(rbox(sx, sy, sz, 0.004), std({ color: 0x2b6cff, roughness: 0.35, transparent: true, opacity: 0.95 })), c);
+  } else if (c.name === 'receiver') {
+    place(new THREE.Mesh(rbox(sx, sy, sz, 0.003), std({ color: 0x151515, roughness: 0.6 })), c);
+    for (const s of [-1, 1]) {
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.0012, 0.0012, 0.09, 6), std({ color: 0x111111 }));
+      ant.position.set(c.position[0] - 0.03, c.position[1] + s * 0.02, c.position[2] + 0.02);
+      ant.rotation.set(0, 0, s * 0.6); droneG.add(ant);
+    }
+  } else if (c.name === 'wiring_pdb') {
+    place(new THREE.Mesh(rbox(sx, sy, 0.002, 0.003), std({ color: 0x9c7a2b, metalness: 0.6, roughness: 0.4 })), c);
+  } else {
+    place(new THREE.Mesh(rbox(sx, sy, sz, 0.004), std({ color: 0x7c8490, roughness: 0.5 })), c);
+  }
+}
+// Motors, propellers and motion-blur discs
+const bladeShape = (() => {
+  const R = drone.prop_radius, s = new THREE.Shape();
+  s.moveTo(0.012, -0.006); s.bezierCurveTo(R * 0.35, -0.018, R * 0.8, -0.014, R, -0.004);
+  s.lineTo(R, 0.004); s.bezierCurveTo(R * 0.8, 0.010, R * 0.35, 0.010, 0.012, 0.006); s.lineTo(0.012, -0.006);
+  return s;
+})();
+const bladeGeo = new THREE.ExtrudeGeometry(bladeShape, { depth: 0.0025, bevelEnabled: false });
+const props = [], bells = [], blurs = [];
+drone.rotors.forEach((rp, i) => {
+  const front = rp[0] > 0, mr = drone.motor_radius, mh = drone.motor_height;
+  const g = new THREE.Group(); g.position.set(...rp); droneG.add(g);
+  const mount = new THREE.Mesh(new THREE.CylinderGeometry(mr * 1.5, mr * 1.5, 0.004, 24), carbon);
+  mount.rotation.x = Math.PI / 2; mount.position.z = -mh / 2; g.add(mount);
+  const stator = new THREE.Mesh(new THREE.CylinderGeometry(mr * 0.95, mr * 0.95, mh * 0.4, 24), std({ color: 0x222222, metalness: 0.7, roughness: 0.4 }));
+  stator.rotation.x = Math.PI / 2; stator.position.z = -mh * 0.25; g.add(stator);
+  const bell = new THREE.Group(); g.add(bell); bells.push(bell);
+  const bellMesh = new THREE.Mesh(new THREE.CylinderGeometry(mr, mr, mh * 0.6, 28), std({ color: 0xb8bec6, metalness: 0.95, roughness: 0.25 }));
+  bellMesh.rotation.x = Math.PI / 2; bellMesh.position.z = mh * 0.15; bellMesh.castShadow = true; bell.add(bellMesh);
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(mr * 1.01, mr * 1.01, mh * 0.15, 28), std({ color: front ? 0xd7262e : 0x222222, metalness: 0.6, roughness: 0.3 }));
+  band.rotation.x = Math.PI / 2; band.position.z = mh * 0.3; bell.add(band);
+  const notch = new THREE.Mesh(new THREE.BoxGeometry(mr * 0.9, 0.003, 0.002), std({ color: 0x111111 }));
+  notch.position.set(mr * 0.45, 0, mh * 0.46); bell.add(notch);
+  const prop = new THREE.Group(); prop.position.z = mh * 0.5 + 0.004; g.add(prop); props.push(prop);
+  const pm = std({ color: front ? 0xff7a1a : 0x1a1a1a, roughness: 0.45 });
+  for (const a of [0, Math.PI]) {
+    const b = new THREE.Mesh(bladeGeo, pm); b.rotation.set(drone.spin[i] * 0.18, 0, a); b.castShadow = true; prop.add(b);
+  }
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.012, 16), std({ color: 0x999999, metalness: 0.9, roughness: 0.2 }));
+  hub.rotation.x = Math.PI / 2; prop.add(hub);
+  const blur = new THREE.Mesh(new THREE.CircleGeometry(drone.prop_radius, 48),
+    new THREE.MeshBasicMaterial({ color: front ? 0xffa060 : 0x9aa0a8, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide }));
+  blur.position.z = mh * 0.5 + 0.006; g.add(blur); blurs.push(blur);
+});
+// Navigation LEDs under the front arms
+for (const [y, col] of [[0.1, 0x22ff66], [-0.1, 0xff2222]]) {
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.006, 10, 8), new THREE.MeshBasicMaterial({ color: col }));
+  led.position.set(0.12, y, -0.02); droneG.add(led);
+}
+
+// ------------------------------------------------------------------ HUD
+document.getElementById('subtitle').textContent =
+  `Neural-network flight controller · simulated MPU-6050 · A* path planner · ${drone.name} · ${drone.mass_g.toFixed(0)} g · ${data.summary.wind} m/s crosswind`;
+const motorsEl = document.getElementById('motors');
+const mbars = [];
+['M0 FL', 'M1 RL', 'M2 RR', 'M3 FR'].forEach((n) => {
+  const d = document.createElement('div'); d.className = 'm';
+  d.innerHTML = `<div class="mb"><div></div></div><div>${n}</div>`; motorsEl.appendChild(d);
+  mbars.push({ bar: d.querySelector('.mb > div'), lab: d.lastChild });
+});
+const $ = (id) => document.getElementById(id);
+// Minimap
+const map = $('map'), mg = map.getContext('2d');
+const lo = course.bounds_lo, hi = course.bounds_hi;
+const mx = (x) => 6 + (x - lo[0]) / (hi[0] - lo[0]) * (map.width - 12);
+const my = (y) => map.height - 6 - (y - lo[1]) / (hi[1] - lo[1]) * (map.height - 12);
+const mapBg = document.createElement('canvas'); mapBg.width = map.width; mapBg.height = map.height;
+{ const g = mapBg.getContext('2d');
+  g.fillStyle = 'rgba(255,255,255,0.05)'; g.fillRect(mx(lo[0]), my(hi[1]), mx(hi[0]) - mx(lo[0]), my(lo[1]) - my(hi[1]));
+  for (const o of course.obstacles) {
+    g.fillStyle = o.kind === 'net' ? 'rgba(255,138,31,0.7)' : o.kind === 'beam' ? 'rgba(242,195,27,0.35)' : 'rgba(220,220,220,0.85)';
+    if (o.type === 'cylinder') { g.beginPath(); g.arc(mx(o.x), my(o.y), Math.max(1.5, o.radius / (hi[0] - lo[0]) * (map.width - 12)), 0, 7); g.fill(); }
+    else { const [cx, cy] = o.center, [sx, sy] = o.size;
+      g.fillRect(mx(cx - sx / 2), my(cy + sy / 2), Math.max(2, mx(cx + sx / 2) - mx(cx - sx / 2)), my(cy - sy / 2) - my(cy + sy / 2)); }
+  }
+  g.strokeStyle = 'rgba(53,214,255,0.9)'; g.lineWidth = 1.2; g.beginPath();
+  data.path.forEach((p, i) => (i ? g.lineTo(mx(p[0]), my(p[1])) : g.moveTo(mx(p[0]), my(p[1])))); g.stroke();
+}
+
+// ------------------------------------------------------------------ camera director
+const smooth = (a, b, t) => { t = Math.min(1, Math.max(0, (t - a) / (b - a))); return t * t * (3 - 2 * t); };
+function lagPos(i, seconds) { return F[Math.max(0, i - Math.round(seconds / DT))].p; }
+function shot(i) {
+  const f = F[i], p = f.p;
+  // Chase: ride the drone's own flown trajectory ~1 s behind it (always obstacle-free).
+  const back = lagPos(i, 0.8);
+  let dx = p[0] - back[0], dy = p[1] - back[1];
+  let n = Math.hypot(dx, dy); if (n < 0.3) { dx = 1; dy = 0; n = 1; }
+  const chasePos = [back[0] - 0.3 * dx / n, back[1] - 0.3 * dy / n + 0.12, back[2] + 0.45];
+  const chaseLook = [p[0] + 0.6 * dx / n, p[1] + 0.6 * dy / n, p[2] - 0.05];
+  const shots = [];
+  const tEnd = F[F.length - 1].t;
+  // Intro crane shot
+  const wIntro = 1 - smooth(1.2, 4.0, f.t);
+  shots.push([wIntro, [-3.2, -2.6, 2.8], [p[0] + 0.6, p[1], p[2]], 26]);
+  // Side shot at the low beam
+  const wBeam = smooth(10.6, 11.4, p[0]) * (1 - smooth(13.6, 14.4, p[0]));
+  shots.push([wBeam, [14.4, -6.8, 1.1], p, 30]);
+  // High shot over the slalom
+  const wSlal = smooth(17.0, 17.6, p[0]) * (1 - smooth(21.6, 22.4, p[0]));
+  shots.push([wSlal * 0.85, [17.0, -5.2, 6.2], p, 30]);
+  // Outro orbit around the landing pad
+  const wOut = smooth(tEnd - 3.2, tEnd - 1.6, f.t);
+  const ang = -1.2 + 0.25 * (f.t - (tEnd - 3.2));
+  shots.push([wOut, [p[0] + 2.4 * Math.cos(ang), p[1] + 2.4 * Math.sin(ang), p[2] + 1.0], p, 40]);
+  let wc = 1, pos = [0, 0, 0], look = [0, 0, 0], fov = 0;
+  for (const [w] of shots) wc -= w;
+  wc = Math.max(0, wc);
+  const add = (w, a, b, fv) => { for (let k = 0; k < 3; k++) { pos[k] += w * a[k]; look[k] += w * b[k]; } fov += w * fv; };
+  add(wc, chasePos, chaseLook, 58);
+  let tot = wc;
+  for (const [w, a, b, fv] of shots) { add(w, a, b, fv); tot += w; }
+  for (let k = 0; k < 3; k++) { pos[k] /= tot; look[k] /= tot; }
+  return { pos, look, fov: fov / tot };
+}
+let cam = null, camLast = -2;
+function camFor(i) {
+  if (i !== camLast + 1) { cam = null; for (let k = Math.max(0, i - 90); k < i; k++) step(k); }
+  step(i);
+  function step(k) {
+    const s = shot(k);
+    if (!cam) cam = { pos: s.pos.slice(), look: s.look.slice(), fov: s.fov };
+    cam.fov += (s.fov - cam.fov) * (1 - Math.exp(-DT / 0.25));
+    const a = 1 - Math.exp(-DT / 0.25), b = 1 - Math.exp(-DT / 0.12);
+    for (let j = 0; j < 3; j++) { cam.pos[j] += (s.pos[j] - cam.pos[j]) * a; cam.look[j] += (s.look[j] - cam.look[j]) * b; }
+    camLast = k;
+  }
+  return cam;
+}
+
+// ------------------------------------------------------------------ per-frame update
+window.renderFrame = (i) => {
+  const f = F[i];
+  droneG.position.set(...f.p);
+  droneG.quaternion.set(f.q[1], f.q[2], f.q[3], f.q[0]);
+  props.forEach((pr, k) => { pr.rotation.z = f.s[k]; bells[k].rotation.z = f.s[k];
+    blurs[k].material.opacity = 0.05 + 0.3 * Math.min(1, f.m[k] * 2.2); });
+  carrot.position.set(...f.tg);
+  trail.geometry.setDrawRange(0, Math.min(trailSegs, Math.floor(i / 2)) * RAD * 6);
+  const c = camFor(i);
+  camera.position.copy(s2w(c.pos));
+  camera.lookAt(s2w(c.look));
+  camera.fov = c.fov; camera.updateProjectionMatrix();
+  for (const l of labels) l.material.opacity = smooth(2.5, 6.0, l.position.distanceTo(camera.position));
+  const dw = s2w(f.p);
+  sun.target.position.copy(dw);
+  sun.position.copy(dw).addScaledVector(sunDirW, 25);
+  // HUD
+  const spd = Math.hypot(...f.v);
+  $('h_t').textContent = `${f.t.toFixed(2)} s`;
+  $('h_sa').textContent = `${spd.toFixed(2)} m/s · ${f.p[2].toFixed(2)} m`;
+  $('h_c').textContent = `${f.c.toFixed(2)} m`;
+  $('h_c').style.color = f.c > 0.5 ? '#3ecf8e' : f.c > 0.25 ? '#ffc53d' : '#ff5a4e';
+  $('h_att').textContent = `${f.e[0].toFixed(0)}° / ${f.e[1].toFixed(0)}° · ${f.ee[0].toFixed(0)}° / ${f.ee[1].toFixed(0)}°`;
+  $('h_p').textContent = `${(f.pr * 100).toFixed(0)} %`;
+  $('h_pb').style.width = `${(f.pr * 100).toFixed(1)}%`;
+  f.m.forEach((m, k) => { mbars[k].bar.style.height = `${Math.min(100, m * 100 * 1.6).toFixed(0)}%`;
+    mbars[k].lab.textContent = `M${k} ${(m * 100).toFixed(0)}%`; });
+  const r = f.imu;
+  $('imu').innerHTML = `MPU-6050 raw  ACCEL ${String(r[0]).padStart(6)} ${String(r[1]).padStart(6)} ${String(r[2]).padStart(6)}<br>` +
+    `              GYRO  ${String(r[4]).padStart(6)} ${String(r[5]).padStart(6)} ${String(r[6]).padStart(6)}   ${(r[3] / 340 + 36.53).toFixed(1)}°C`;
+  $('imu').style.whiteSpace = 'pre';
+  $('section').textContent = f.sec;
+  mg.clearRect(0, 0, map.width, map.height); mg.drawImage(mapBg, 0, 0);
+  mg.strokeStyle = '#ff8a1f'; mg.lineWidth = 2; mg.beginPath();
+  for (let k = 0; k <= i; k += 3) { const q = F[k].p; k ? mg.lineTo(mx(q[0]), my(q[1])) : mg.moveTo(mx(q[0]), my(q[1])); }
+  mg.lineTo(mx(f.p[0]), my(f.p[1])); mg.stroke();
+  mg.fillStyle = '#ffffff'; mg.beginPath(); mg.arc(mx(f.p[0]), my(f.p[1]), 4, 0, 7); mg.fill();
+  const endT = F[F.length - 1].t, S = data.summary;
+  $('done').style.display = f.t > endT - 1.4 && S.status === 'completed' ? 'block' : 'none';
+  $('done2').textContent = `${S.path_len} m in ${S.time} s · 0 collisions · closest approach ${S.min_clearance} m · mean path deviation ${S.dev_mean_cm} cm`;
+  renderer.render(scene, camera);
+};
+window.renderFrame(0);
+window.sceneReady = true;
+</script>
+</body>
+</html>

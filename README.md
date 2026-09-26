@@ -43,6 +43,30 @@ wide scene, a true-scale chase camera, true vs MPU-6050-estimated attitude, moto
 On 4 CPU cores training runs at about 7,000 simulated steps/s. The network learns to hover in about 2M
 steps (5 minutes). A solid policy that handles wind and pushes needs 20–30M steps (about an hour).
 
+## 3D obstacle course video
+
+[`docs/obstacle_course.mp4`](docs/obstacle_course.mp4): the neural network flies a 25 m course through a
+pillar forest, a high window, under a low beam, through a low window, a three-gate slalom, and on to a
+landing pad, with a 1 m/s crosswind.
+
+```bash
+pip install imageio-ffmpeg && (cd render3d && npm install)
+python scripts/record_course.py                    # plan, fly, render: docs/obstacle_course.mp4
+python scripts/record_course.py --set payload=0.2 --speed 2.0 --wind 1.5
+```
+
+How the obstacle avoidance works (`drone_sim/course.py`): the neural network is the low-level pilot and has
+no obstacle sensor. An A* planner searches a 3D grid in which every obstacle is inflated by 0.75 m. It
+shortcuts the result with line-of-sight checks and smooths it with a Catmull-Rom spline. A "carrot" target
+then slides along the path, and the network chases it using the simulated MPU-6050 and position fix. Every
+simulation step checks the true distance from the drone's prop tips to the obstacle geometry; any contact
+would end the run as a crash.
+
+Rendering (`render3d/`): three.js in headless Chromium with PBR materials, soft sun shadows, sky, fog and
+distant scenery. The drone mesh is built from the component list, so the battery, flight controller,
+MPU-6050 board, ESCs, arms, motors and propellers sit where the weight system says they are. The camera
+rides the drone's own flown trajectory, which is always obstacle-free, and cuts to side and overhead shots.
+
 ## Results (pre-trained `models/f450_policy.pt`, 30M steps, 200 random episodes each)
 
 Episodes start thrown (up to 60° tilt, spinning), with wind, gusts, random shoves and ±15 % mass randomisation.

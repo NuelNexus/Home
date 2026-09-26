@@ -1,0 +1,10 @@
+{
+  "name": "drone-render3d",
+  "private": true,
+  "description": "three.js offline renderer for drone flight logs (headless Chromium)",
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "^1.55.0",
+    "three": "^0.180.0"
+  }
+}
