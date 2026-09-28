@@ -217,6 +217,9 @@ def main():
     p.add_argument("--height", type=int, default=720)
     p.add_argument("--out", default=str(root / "docs/obstacle_flight.mp4"))
     p.add_argument("--preview", help="comma-separated times [s]: save PNG stills next to --out instead of a video")
+    p.add_argument("--no-audio", action="store_true", help="skip the synthesised soundtrack")
+    p.add_argument("--audio-only", action="store_true",
+                   help="re-fly (deterministic) and add the soundtrack to an existing --out video, no re-render")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
 
@@ -234,7 +237,28 @@ def main():
     dev = np.array([np.min(np.linalg.norm(path - q, axis=1)) for q in L["pos"]])
     print(f"  {'CRASHED' if L['crashed'] else 'completed'} in {L['t'][-1]:.1f} s | min clearance "
           f"{L['clearance'].min():.2f} m | mean path deviation {dev.mean()*100:.0f} cm")
-    render(L, model, course, path, a)
+    if not a.audio_only:
+        render(L, model, course, path, a)
+    if not a.no_audio and not a.preview:
+        add_soundtrack(L, model, a)
+
+
+def add_soundtrack(L, model, a):
+    import imageio_ffmpeg
+
+    from drone_sim.audio import mux, synthesize, write_wav
+    out = Path(a.out)
+    duration = int(L["t"][-1] * a.fps) / a.fps
+    mp = model.mass_properties()
+    audio = synthesize(L, model.rotor_positions - mp.com, model.max_rotor_speed, duration=duration,
+                       obstacle_clearance=L["clearance"])
+    wav = out.with_suffix(".wav")
+    write_wav(wav, audio)
+    tmp = out.with_name(out.stem + "_audio.mp4")
+    mux(out, wav, tmp, imageio_ffmpeg.get_ffmpeg_exe())
+    tmp.replace(out)
+    wav.unlink()
+    print(f"soundtrack added to {out} ({duration:.1f} s, stereo 44.1 kHz)")
 
 
 def section_name(x):

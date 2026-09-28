@@ -51,6 +51,12 @@ three-gate slalom, and on to a landing pad, in a 1 m/s crosswind. The layout mat
 that follows the drone, a true-scale chase camera with a solid drone model, true vs MPU-6050-estimated attitude,
 motor output, raw MPU-6050 registers and a top-view minimap.
 
+The soundtrack is synthesised from the simulation (`drone_sim/audio.py`), not a stock sound effect. Each motor
+buzzes at its blade-pass frequency (2 × rotor speed / 2π), plus a brushless whine (7 pole pairs), prop wash
+that grows with thrust, wind noise that grows with airspeed, and whooshes when the drone passes close to an
+obstacle. Left rotors are panned left and right rotors right. Add it to an existing render with
+`python scripts/record_obstacles.py --audio-only`.
+
 ```bash
 pip install imageio-ffmpeg
 python scripts/record_obstacles.py                          # docs/obstacle_flight.mp4 (about 8 min to render)
