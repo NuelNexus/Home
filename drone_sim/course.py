@@ -271,13 +271,19 @@ def plan_smooth_path(course: Course, clearance=0.75, res=0.2):
 
 # ------------------------------------------------------------------ path flight
 def fly_path(env: DroneEnv, act, path, course: Course | None = None, lookahead=0.9, speed=1.6, wind=(0, 0, 0),
-             settle=1.5, max_time=60.0, drone_radius=0.36):
-    """Follow ``path`` (N x 3) with a carrot target and record everything."""
+             settle=1.5, max_time=60.0, drone_radius=0.36, throw=False):
+    """Follow ``path`` (N x 3) with a carrot target and record everything.
+
+    ``throw=True`` releases the drone tumbling (70° roll, spinning) at the start;
+    the carrot waits until it has had time to level itself.
+    """
     ph = env.phys
     wind = np.asarray(wind, float)
     env.reset()
-    q0 = quat_from_euler(0.0, 0.0, 0.0)
-    ph.reset_state([0], path[0], [0, 0, 0], q0, [0, 0, 0], ph.hover_rotor_speed()[0])
+    q0 = quat_from_euler(1.2, -0.6, 0.0) if throw else quat_from_euler(0.0, 0.0, 0.0)
+    rate0 = [4.0, -3.0, 2.0] if throw else [0.0, 0.0, 0.0]
+    ph.reset_state([0], path[0], [0, 0, 0], q0, rate0, ph.hover_rotor_speed()[0])
+    t_start = 2.0 if throw else 0.5
     f, w = ph.imu_kinematics()
     env.imu.reset([0], f[:1], w[:1])
     env.ahrs.reset([0], q0)
@@ -296,7 +302,7 @@ def fly_path(env: DroneEnv, act, path, course: Course | None = None, lookahead=0
     while t < max_time:
         i_near = np.argmin(np.linalg.norm(path - ph.pos[0], axis=1))
         s_near = s_path[i_near]
-        if t > 0.5:
+        if t > t_start:
             s_carrot = min(s_carrot + speed * env.dt, s_near + lookahead, L)
         target = np.array([np.interp(s_carrot, s_path, path[:, k]) for k in range(3)])
         env.set_target(0, target)

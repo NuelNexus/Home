@@ -45,14 +45,17 @@ steps (5 minutes). A solid policy that handles wind and pushes needs 20–30M st
 
 ## 3D obstacle course video
 
-[`docs/obstacle_course.mp4`](docs/obstacle_course.mp4): the neural network flies a 25 m course through a
-pillar forest, a high window, under a low beam, through a low window, a three-gate slalom, and on to a
-landing pad, with a 1 m/s crosswind.
+[`docs/obstacle_flight.mp4`](docs/obstacle_flight.mp4): the neural network is released tumbling at 70°, steadies
+itself, then flies a 25 m course: a pillar forest, a high window, under a low beam, through a low window, a
+three-gate slalom, and on to a landing pad, in a 1 m/s crosswind. The layout matches the first video: a scene view
+that follows the drone, a true-scale chase camera with a solid drone model, true vs MPU-6050-estimated attitude,
+motor output, raw MPU-6050 registers and a top-view minimap.
 
 ```bash
-pip install imageio-ffmpeg && (cd render3d && npm install)
-python scripts/record_course.py                    # plan, fly, render: docs/obstacle_course.mp4
-python scripts/record_course.py --set payload=0.2 --speed 2.0 --wind 1.5
+pip install imageio-ffmpeg
+python scripts/record_obstacles.py                          # docs/obstacle_flight.mp4 (about 8 min to render)
+python scripts/record_obstacles.py --set payload=0.2 --wind 1.5 --out runs/heavy.mp4
+python scripts/record_obstacles.py --preview 1,11.5,19.5    # PNG stills only
 ```
 
 How the obstacle avoidance works (`drone_sim/course.py`): the neural network is the low-level pilot and has
@@ -62,10 +65,8 @@ then slides along the path, and the network chases it using the simulated MPU-60
 simulation step checks the true distance from the drone's prop tips to the obstacle geometry; any contact
 would end the run as a crash.
 
-Rendering (`render3d/`): three.js in headless Chromium with PBR materials, soft sun shadows, sky, fog and
-distant scenery. The drone mesh is built from the component list, so the battery, flight controller,
-MPU-6050 board, ESCs, arms, motors and propellers sit where the weight system says they are. The camera
-rides the drone's own flown trajectory, which is always obstacle-free, and cuts to side and overhead shots.
+`scripts/record_course.py` + `render3d/` is an alternative renderer for the same flight: three.js in headless
+Chromium (needs `cd render3d && npm install`).
 
 ## Results (pre-trained `models/f450_policy.pt`, 30M steps, 200 random episodes each)
 
