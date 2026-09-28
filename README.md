@@ -6,6 +6,9 @@ using the same sensors a real flight controller has: a **simulated MPU-6050** bu
 numbers, plus a position fix. A **component weight system** lets you change the mass and position of every
 part. The simulator then recomputes the centre of mass and inertia tensor exactly.
 
+**New to this?** Read [`TUTORIAL.md`](TUTORIAL.md) instead — a plain-English, step-by-step guide to
+installing and running everything, with no assumed background. This README is the technical reference.
+
 ```
 components.json ──► DroneModel (mass, CoM, inertia tensor, rotor geometry)
                          │

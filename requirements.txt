@@ -1,5 +1,14 @@
-numpy>=1.24
-torch>=2.0
-matplotlib>=3.7   # optional, for flight plots
-pytest>=7         # optional, for tests
-imageio-ffmpeg>=0.4 # optional, for record_flight.py videos
+# --------------------------------------------------------------------------
+# This line tells pip to also look on PyTorch's own download server. That
+# server has a special "CPU-only" build of torch that does NOT include the
+# ~2 GB of NVIDIA graphics-card files most people don't need. Without this
+# line, plain `pip install torch` can silently download the huge GPU version.
+# --------------------------------------------------------------------------
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+numpy>=1.24               # required: all the flight-physics math
+torch>=2.0                # required: the neural network + training (CPU-only, see above)
+matplotlib>=3.7           # optional: needed to draw/record flight videos
+pillow>=9                 # optional: used by matplotlib, and for saving .gif videos
+imageio-ffmpeg>=0.4       # optional: needed to save .mp4 videos (includes its own ffmpeg)
+pytest>=7                 # optional: only needed to run the test suite
